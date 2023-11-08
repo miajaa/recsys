@@ -30,7 +30,7 @@ def compute_user_similarity(user_id):
             common_movies = user_ratings.index.intersection(other_user_ratings.index)
 
             # If there are at least 5 common movies
-            if len(common_movies) >= 10:
+            if len(common_movies) >= 5:
                 # Get ratings for common movies for the specified user
                 user_ratings_common = user_ratings[common_movies]
                 # Get ratings for common movies for the other user
