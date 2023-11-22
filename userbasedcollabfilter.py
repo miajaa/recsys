@@ -37,12 +37,12 @@ def compute_user_similarity(user_id):
 
 
 # C) Predict movie scores if rating doesn't exist
-def predict_movie_score(user_id, movie_id, similar_users, floor=0.5):   # Ratings can't be less than 0.5
+def predict_movie_score(user_id, movie_id, similar_users, floor=0.5):  # Ratings can't be less than 0.5
     user_ratings = ratings[ratings['user_id'] == user_id].set_index('movie_id')['rating']
     total_similarity = 0
     weighted_sum = 0
     predicted_score = 0
-    
+
     if movie_id not in user_ratings.index:
         # Filter ratings for similar users who have rated the specified movie
         other_user_ratings = \
@@ -165,7 +165,7 @@ def group_recommendation_disagreements(individual_ratings, coefficient=0.2):
 
 
 # F.4 Function to generate group of 3 users
-def generate_group_of_users(num_members=3): # number of members can be specified
+def generate_group_of_users(num_members=3):  # number of members can be specified
     group_members = []
 
     for i in range(num_members):
@@ -222,18 +222,19 @@ def recommend_movies(movie_list, member_ids, aggregation_method, coefficient=0.2
         for member_id in member_ids:
             similar_users = all_similarities[member_id]
             user_ratings = all_user_ratings[member_id]
-            
+
             # Check if the user has a rating for the movie
             if movie_id not in user_ratings.index:
                 # If not, predict the rating using the predict_movie_score function
                 prediction = predict_movie_score(member_id, movie_id, similar_users)
-                
+
                 # Add the movie_id to user_ratings with the predicted score
-                user_ratings.at[movie_id] = prediction if prediction is not None else 0  # Use 0 as a default if prediction is None
+                user_ratings.at[
+                    movie_id] = prediction if prediction is not None else 0  # Use 0 as a default if prediction is None
 
             # Add the score
             member_scores.append(user_ratings[movie_id])
-        
+
         # Calculate disagreement for each movie
         disagreement = np.std(member_scores)
 
@@ -245,9 +246,9 @@ def recommend_movies(movie_list, member_ids, aggregation_method, coefficient=0.2
             elif aggregation_method == 'Least Misery':
                 aggregated_score = round(np.min(member_scores), 3)
             # Apply the disagreement-aware aggregation
-            elif aggregation_method == 'Disagreement Aware': 
+            elif aggregation_method == 'Disagreement Aware':
                 aggregated_score = round(np.mean(member_scores) + coefficient * disagreement, 3)
-                
+
             # Add the aggregated score to the dictionary
             aggregated_scores[movie_id] = aggregated_score
 
@@ -255,11 +256,9 @@ def recommend_movies(movie_list, member_ids, aggregation_method, coefficient=0.2
     top_movies = sorted(aggregated_scores.items(), key=lambda x: x[1], reverse=True)[:10]
     print(f'{aggregation_method} Aggregation: {top_movies}')
 
-### PRINTS AND FUNCTION CALLS ###
 
 # F.7 Generate group of 3 users
 group_members = generate_group_of_users()
-
 
 # F.8 Prompt user for movie ID for group recommendation
 while True:
@@ -272,10 +271,8 @@ while True:
     except ValueError:
         print("Invalid input. Please enter a valid movie ID.")
 
-
 # F.9 Calculate individual ratings for group members for group_movie_id
 member_ratings = calculate_user_ratings(group_members, group_movie_id)
-
 
 # F.10 Generate group recommendations for given movie using three aggregation methods
 group_recommendation_avg = group_recommendation_average(member_ratings)
@@ -283,14 +280,44 @@ group_recommendation_lm = group_recommendation_least_misery(member_ratings)
 group_recommendation_disagreements_result = group_recommendation_disagreements(member_ratings)
 
 
-# F.11 Display group recommendations
-print(f'\nGroup Recommendation for Movie {group_movie_id} Using Average Aggregation: {group_recommendation_avg}')
-print(f'Group Recommendation for Movie {group_movie_id} Using Least Misery Aggregation: {group_recommendation_lm}')
-print(f'Group Recommendation for Movie {group_movie_id} Using Disagreements-Aware Aggregation: {group_recommendation_disagreements_result}')
+# G) Design and implement a new method for sequential group recommendations
+def sequential_group_recommendation(user_ids, movie_sequence, similarity_scores):
+    cumulative_ratings = {user_id: [] for user_id in user_ids}
+
+    for movie_id in movie_sequence:
+        individual_ratings = {}
+        for user_id in user_ids:
+            # Use precomputed similarity scores
+            similar_users = similarity_scores[user_id]
+            prediction = predict_movie_score(user_id, movie_id, similar_users)
+            if prediction is not None:
+                individual_ratings[user_id] = prediction
+
+        if not individual_ratings:
+            continue
+
+        for user_id in user_ids:
+            if user_id in individual_ratings:
+                cumulative_ratings[user_id].append(individual_ratings[user_id])
+
+    average_ratings = {movie_id: np.mean(ratings) for movie_id, ratings in cumulative_ratings.items()}
+
+    return average_ratings
 
 
-# F.12 Show top 10 movie recommendations for the group using three methods
-print('\nTop 10 Movie Recommendations:')
-recommend_movies(movie_list, group_members, 'Average')
-recommend_movies(movie_list, group_members, 'Least Misery')
-recommend_movies(movie_list, group_members, 'Disagreement Aware')
+# H) Generate top-10 recommendations for 3 different sequences
+for i in range(3):
+    # H.1 Generate a sequential movie sequence (replace with your actual sequences)
+    group_movie_sequence = [group_movie_id + i, group_movie_id + i + 1, group_movie_id + i + 2]
+
+    # H.2 Generate similarity scores for all users in the group
+    similarity_scores = {user_id: compute_user_similarity(user_id) for user_id in group_members}
+
+    # H.3 Generate sequential group recommendations using the new method
+    sequential_group_recommendations = sequential_group_recommendation(group_members, group_movie_sequence,
+                                                                       similarity_scores)
+
+    # H.4 Display sequential group recommendations
+    print(f'\nTop-10 Recommendations for Movie Sequence {group_movie_sequence}:')
+    # Using the previous recommend_movies function
+    recommend_movies(movie_list, group_members, 'Average', similarity_scores)
