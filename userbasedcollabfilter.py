@@ -202,17 +202,9 @@ def calculate_user_ratings(user_ids, movie_id):
 
 
 # F.6 Calculate top 10 recommendations with four different aggregation methods
-def recommend_movies(movie_list, member_ids, aggregation_method, dynamic_weights=None, coefficient=0.):
+def recommend_movies(movie_list, member_ids, aggregation_method, dynamic_weights=None, coefficient=0.2):
     # Dictionary to store aggregated scores for each movie
     aggregated_scores = {}
-
-    # Store user similarities for all members and find existing ratings
-    all_similarities = {}
-    all_user_ratings = {}
-
-    for member_id in member_ids:
-        all_similarities[member_id] = compute_user_similarity(member_id)
-        all_user_ratings[member_id] = ratings[ratings['user_id'] == member_id].set_index('movie_id')['rating']
 
     # Loop through each movie in the list
     for movie_id in movie_list:
@@ -271,8 +263,8 @@ def calculate_dynamic_weights_least_misery(previous_recommendations, member_ids,
         for member_id in member_ids:
             member_scores = []
             for movie_id, _ in previous_recommendations:
-                similar_users = compute_user_similarity(member_id)
-                user_ratings = ratings[ratings['user_id'] == member_id].set_index('movie_id')['rating']
+                similar_users = all_similarities[member_id]
+                user_ratings = all_user_ratings[member_id]
 
                 # Check if the user has a rating for the movie
                 if movie_id not in user_ratings.index:
@@ -306,6 +298,16 @@ def calculate_dynamic_weights_least_misery(previous_recommendations, member_ids,
 
 # Generate group of 3 users
 group_members = generate_group_of_users()
+
+
+# Store user similarities for all members and find existing ratings
+all_similarities = {}
+all_user_ratings = {}
+
+for member_id in group_members:
+    all_similarities[member_id] = compute_user_similarity(member_id)
+    all_user_ratings[member_id] = ratings[ratings['user_id'] == member_id].set_index('movie_id')['rating']
+
 
 # F.8 Show top 10 movie recommendations for the group using dynamic weights
 print('\nTop 10 Sequential Movie Recommendations with Dynamic Weights:')
