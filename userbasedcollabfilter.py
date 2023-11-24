@@ -202,7 +202,7 @@ def calculate_user_ratings(user_ids, movie_id):
 
 
 # F.6 Calculate top 10 recommendations with four different aggregation methods
-def recommend_movies(movie_list, member_ids, aggregation_method, dynamic_weights=None, coefficient=0.2):
+def recommend_movies(movie_list, member_ids, aggregation_method, dynamic_weights=None, coefficient=0.):
     # Dictionary to store aggregated scores for each movie
     aggregated_scores = {}
 
@@ -257,29 +257,49 @@ def recommend_movies(movie_list, member_ids, aggregation_method, dynamic_weights
     # Sort and display the top 10 movies
     top_movies = sorted(aggregated_scores.items(), key=lambda x: x[1], reverse=True)[:10]
     print(f'{aggregation_method} Aggregation: {top_movies}')
+    return top_movies
 
 
-# F.7 Least Misery with Dynamic Weight Adjustment
-def group_recommendation_least_misery_dynamic(individual_ratings, rounds=3, decay_factor=0.2):
-    # Extract values
-    ratings_values = np.array(list(individual_ratings.values()))
+# F.7 Calculate dynamic weights based on least misery scores
+def calculate_dynamic_weights_least_misery(previous_recommendations, member_ids, coefficient=0.4):
+    # Dictionary to store the mean least misery scores for each user
+    mean_least_misery_scores = {}
 
-    # If it's the first round, initialize weights equally
-    weights = np.ones_like(ratings_values) / len(ratings_values)
+    # Check if there are previous recommendations
+    if previous_recommendations is not None:
+        # Calculate least misery scores for each user and each movie in the previous recommendations
+        for member_id in member_ids:
+            member_scores = []
+            for movie_id, _ in previous_recommendations:
+                similar_users = compute_user_similarity(member_id)
+                user_ratings = ratings[ratings['user_id'] == member_id].set_index('movie_id')['rating']
 
-    # Loop through rounds
-    for i in range(rounds):
-        # Update least misery ratings based on previous weights
-        least_misery_ratings = np.min(ratings_values * weights, axis=0)
+                # Check if the user has a rating for the movie
+                if movie_id not in user_ratings.index:
+                    # If not, predict the rating using the predict_movie_score function
+                    prediction = predict_movie_score(member_id, movie_id, similar_users)
 
-        # Adjust weights based on previous satisfaction/misery
-        weights = weights * np.exp(-decay_factor * (ratings_values - least_misery_ratings))
-        weights /= np.sum(weights)  # Normalize weights
+                    # Add the movie_id to user_ratings with the predicted score
+                    user_ratings.at[movie_id] = prediction if prediction is not None else 0  # Use 0 as a default if prediction is None
 
-    # Calculate the weighted least misery rating
-    weighted_least_misery = np.sum(weights * least_misery_ratings)
+                # Add the score
+                member_scores.append(user_ratings[movie_id])
 
-    return round(weighted_least_misery, 3), weights
+            # Calculate mean least misery score for the user
+            mean_least_misery_scores[member_id] = np.mean(sorted(member_scores)[:10])
+
+    # If no previous recommendations, initialize with equal weights
+    else:
+        for member_id in member_ids:
+            mean_least_misery_scores[member_id] = 1 / len(member_ids)
+
+    # Calculate dynamic weights based on mean least misery scores
+    dynamic_weights = np.array([1 / (1 + coefficient * score) for score in mean_least_misery_scores.values()])
+
+    # Normalize dynamic weights
+    dynamic_weights /= np.sum(dynamic_weights)
+
+    return dynamic_weights
 
 
 ### PRINTS AND FUNCTION CALLS ###
@@ -287,68 +307,21 @@ def group_recommendation_least_misery_dynamic(individual_ratings, rounds=3, deca
 # Generate group of 3 users
 group_members = generate_group_of_users()
 
-
-# Prompt user for movie ID for group recommendation
-while True:
-    try:
-        group_movie_id = int(input("Enter movie ID for group recommendation: "))
-        if group_movie_id not in ratings['movie_id'].unique():
-            print("Invalid movie ID. Please enter a valid movie ID.")
-        else:
-            break
-    except ValueError:
-        print("Invalid input. Please enter a valid movie ID.")
-
-
-# Calculate individual ratings for group members for group_movie_id
-member_ratings = calculate_user_ratings(group_members, group_movie_id)
-
-# Calculate individual ratings for group members for group_movie_id
-# Use previous weights to adjust dynamic weights
-previous_weights = None
-member_ratings_dynamic = calculate_user_ratings(group_members, group_movie_id)
-
-# F.8 Generate group recommendations with dynamic weights for given movie
-group_recommendation_lm_dynamic, dynamic_weights = group_recommendation_least_misery_dynamic(member_ratings_dynamic)
-
-# F.9 Show top 10 movie recommendations for the group using dynamic weights
-print('\nTop 10 Movie Recommendations with Dynamic Weights:')
+# F.8 Show top 10 movie recommendations for the group using dynamic weights
+print('\nTop 10 Sequential Movie Recommendations with Dynamic Weights:')
 rounds = 3
-previous_weights = None
+previous_weights = np.ones(len(group_members)) / len(group_members)
+previous_recommendations = None
 for i in range(rounds):
-    # Calculate individual ratings for the current round
-    member_ratings_dynamic = calculate_user_ratings(group_members, group_movie_id)
 
     # Use previous weights to adjust dynamic weights
     if previous_weights is not None:
-        _, dynamic_weights = group_recommendation_least_misery_dynamic(member_ratings_dynamic, rounds=i + 1, decay_factor=0.2)
-        dynamic_weights = previous_weights + (dynamic_weights - previous_weights) / (i + 1)
-    else:
-        _, dynamic_weights = group_recommendation_least_misery_dynamic(member_ratings_dynamic, rounds=i + 1, decay_factor=0.2)
+        dynamic_weights = calculate_dynamic_weights_least_misery(previous_recommendations, group_members)
 
     # Display recommendations
-    print(f'\nGroup Recommendation for Movie {group_movie_id} Using Dynamic Least Misery Aggregation (Round {i + 1}):')
+    print(f'\nGroup Recommendation Using Dynamic Least Misery Aggregation (Round {i + 1}):')
     print(f'Dynamic Weights: {dynamic_weights}')
-    recommend_movies(movie_list, group_members, 'Dynamic Least Misery', dynamic_weights)
+    previous_recommendations = recommend_movies(movie_list, group_members, 'Dynamic Least Misery', dynamic_weights)
     
-
     # Update the dynamic weights for the next round
     previous_weights = dynamic_weights
-
-# F.10 Generate group recommendations for given movie using three aggregation methods
-#group_recommendation_avg = group_recommendation_average(member_ratings)
-#group_recommendation_lm = group_recommendation_least_misery(member_ratings)
-#group_recommendation_disagreements_result = group_recommendation_disagreements(member_ratings)
-
-
-# F.11 Display group recommendations
-#print(f'\nGroup Recommendation for Movie {group_movie_id} Using Average Aggregation: {group_recommendation_avg}')
-#print(f'Group Recommendation for Movie {group_movie_id} Using Least Misery Aggregation: {group_recommendation_lm}')
-#print(f'Group Recommendation for Movie {group_movie_id} Using Disagreements-Aware Aggregation: {group_recommendation_disagreements_result}')
-
-
-# F.12 Show top 10 movie recommendations for the group using three methods
-#print('\nTop 10 Movie Recommendations:')
-#recommend_movies(movie_list, group_members, 'Average')
-#recommend_movies(movie_list, group_members, 'Least Misery')
-#recommend_movies(movie_list, group_members, 'Disagreement Aware')
