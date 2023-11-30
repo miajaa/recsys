@@ -111,12 +111,13 @@ def compute_user_similarity(user_id):
     return similarity_scores
 
 
+# Function to provide explanations for why a certain recommendation may not be suitable for group members
 def explain_why_not(input_string, why_not_question, rating_scores, recommendation_list, numPI, numP, peers,
                     neighborhood_size=5):
-    explanations = {}
+    explanations = {}  # Dictionary to store explanations for each group member
 
     for target_user_id in group_members:
-        explanation = set()
+        explanation = set()  # Set to store unique explanations for each user
         similarity_scores = compute_user_similarity(target_user_id)
         id = movies_dict.get(input_string)
 
