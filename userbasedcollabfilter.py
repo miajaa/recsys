@@ -6,6 +6,75 @@ ratings = pd.read_csv('u.data', sep='\t', names=['user_id', 'movie_id', 'rating'
 num_ratings = len(ratings)
 movie_list = ratings['movie_id'].unique()
 
+# Read the content of the u.genre file
+with open('u.genre', 'r') as file:
+    genre_content = file.readlines()
+
+# Create a dictionary to store genre information
+genre_dict = {
+    'unknown': [],
+    'Action': [],
+    'Adventure': [],
+    'Animation': [],
+    'Children\'s': [],
+    'Comedy': [],
+    'Crime': [],
+    'Documentary': [],
+    'Drama': [],
+    'Fantasy': [],
+    'Film-noir': [],
+    'Horror': [],
+    'Musical': [],
+    'Mystery': [],
+    'Romance': [],
+    'Sci-fi': [],
+    'Thriller': [],
+    'War': [],
+    'Western': []
+}
+
+# Iterate through each line and populate the dictionary
+for line in genre_content:
+    parts = line.strip().split('|')  # Use '|' as the delimiter for tab-separated values
+    genre_name = parts[0]
+
+    # Ensure there are at least two parts before accessing the second part
+    if len(parts) >= 2:
+        genre_dict[genre_name] = []  # Create an empty list for each genre
+
+# Read the content of the u.item file
+with open('u.item', 'r', encoding='latin-1') as file:
+    movies_content = file.readlines()
+
+# Create a dictionary to store movie information
+movies_dict = {}
+
+# Iterate through each line in the u.item file
+for line in movies_content:
+    parts = line.strip().split('|')
+    movie_title_with_year = parts[1]
+    movie_id = int(parts[0])
+
+    # Remove the last 7 characters to exclude the year and surrounding parentheses
+    movie_title = movie_title_with_year[:-7].strip() if len(movie_title_with_year) > 7 else movie_title_with_year
+
+    # Add movie to movies dictionary
+    movies_dict[movie_title] = movie_id
+
+    # Add movie to category dictionary based on genre
+    for genre, value in zip(genre_dict.keys(), map(int, parts[5:])):
+        if value == 1:
+            genre_dict[genre].append(movie_title)  # Add movie to the genre_dict as well
+
+    # Add movie to category dictionary based on genre
+    for genre, value in zip(genre_dict.keys(), map(int, parts[5:])):
+        if value == 1:
+            genre_dict[genre].append(movie_title)  # Add movie to the genre_dict as well
+
+# Print or use the resulting dictionaries as needed
+print(movies_dict)
+print(genre_dict)
+
 # Declare peers dictionary globally
 peers = {user_id: {} for user_id in ratings['user_id'].unique()}
 
@@ -42,51 +111,55 @@ def compute_user_similarity(user_id):
     return similarity_scores
 
 
-def explain_why_not(i, user_id, why_not_question, rating_scores, recommendation_list, numPI, numP, peers,
+def explain_why_not(input_string, why_not_question, rating_scores, recommendation_list, numPI, numP, peers,
                     neighborhood_size=5):
-    explanation = set()
-    similarity_scores = {}
+    explanations = {}
 
-    for user_id in U:
-        similarity_scores[user_id] = compute_user_similarity(user_id)
+    for target_user_id in group_members:
+        explanation = set()
+        similarity_scores = compute_user_similarity(target_user_id)
+        id = movies_dict.get(input_string)
 
-    # Check if the specific item does not exist in the database.
-    if i not in rating_scores:
-        explanation.add('Item not in database')
-    else:
-        # Check if there is a tie with another item in the recommendation list.
-        tied_items = [i0 for i0 in rating_scores if
-                      i0 != i and rating_scores[user_id, i0] == rating_scores[user_id, i] and recommendation_list.index(
-                          i0) <= 2 * neighborhood_size]
-        if tied_items:
-            explanation.add('Tied relevance scores')
-        # Check if the item appears between the kth and 2kth entry in the recommendation list.
-        elif recommendation_list.index(i) <= 2 * neighborhood_size:
-            explanation.add('Position in list (neighborhood_size)')
-        # Check if none of the users in the system have rated the item.
-        elif i not in rating_scores:
-            explanation.add('No ratings for the item')
+        # Check if the specific item does not exist in the database.
+        if input_string not in movies_dict:
+            explanation.add('Item not in database')
         else:
-            # Check the peers of the user.
-            if any(peers[peer][i] for peer in peers):
-                for peer in peers:
-                    if peers[peer][i]:
-                        explanation.add(
-                            (f"Peer {peer}", f"Rating: {peers[peer][i]}", f"Similarity: {similarity_scores[peer]}"))
-                # Check if there are not enough most similar peers who have rated the item.
-                if len([1 for peer in peers if peers[peer][i]]) < numPI:
-                    explanation.add('Insufficient most similar peers')
-                # Check if there are not enough most similar peers who have rated the item among the top numP peers.
-                if len(peers) < numP:
-                    explanation.add('Insufficient overall similar peers')
+            # Check if there is a tie with another item in the recommendation list.
+            tied_items = [i0 for i0 in rating_scores if
+                          i0 != id and rating_scores[target_user_id, i0] == rating_scores[
+                              target_user_id, id] and recommendation_list.count(i0) <= 2 * neighborhood_size]
+            if tied_items:
+                explanation.add('Tied relevance scores')
+            # Check if the item appears between the kth and 2kth entry in the recommendation list.
+            elif id in recommendation_list and recommendation_list.index(id) <= 2 * neighborhood_size:
+                explanation.add('Position in list (neighborhood_size)')
+            # Check if none of the users in the system have rated the item.
+            elif id not in rating_scores:
+                explanation.add('No ratings for the item')
             else:
-                # Check if none of the peers has rated the item.
-                for u0 in U:
-                    if u0 != user_id and peers[u0][i]:
-                        explanation.add((f"User {u0}", f"Rating: {peers[u0][i]}", '-'))
-                explanation.add('No peer ratings for the item')
+                # Check the peers of the target user.
+                if any(peers[target_user_id][peer][id] for peer in peers[target_user_id]):
+                    for peer in peers[target_user_id]:
+                        if peers[target_user_id][peer][id]:
+                            explanation.add(
+                                (f"Peer {peer}", f"Rating: {peers[target_user_id][peer][id]}",
+                                 f"Similarity: {similarity_scores[peer]}"))
+                    # Check if there are not enough most similar peers who have rated the item.
+                    if len([1 for peer in peers[target_user_id] if peers[target_user_id][peer][id]]) < numPI:
+                        explanation.add('Insufficient most similar peers')
+                    # Check if there are not enough most similar peers who have rated the item among the top numP peers.
+                    if len(peers[target_user_id]) < numP:
+                        explanation.add('Insufficient overall similar peers')
+                else:
+                    # Check if none of the peers has rated the item.
+                    for u0 in U:
+                        if u0 != target_user_id and peers[target_user_id][u0][id]:
+                            explanation.add((f"User {u0}", f"Rating: {peers[target_user_id][u0][id]}", '-'))
+                    explanation.add('No peer ratings for the item')
 
-    return explanation
+        explanations[target_user_id] = explanation
+
+    return explanations
 
 
 # C) Predict movie scores if rating doesn't exist
@@ -263,15 +336,21 @@ def recommend_movies(movie_list, member_ids, aggregation_method, coefficient=0.2
     # Store user similarities for all members and find existing ratings
     all_similarities = {}
     all_user_ratings = {}
+    all_recommendation_lists = {}  # New dictionary to store recommendation lists
 
     for member_id in member_ids:
         all_similarities[member_id] = compute_user_similarity(member_id)
         all_user_ratings[member_id] = ratings[ratings['user_id'] == member_id].set_index('movie_id')['rating']
+        all_recommendation_lists[member_id] = get_top_recommended_movies(member_id, all_similarities[member_id])
+
+    # List to store extended recommendation lists for each member
+    member_recommendations = []
 
     # Loop through each movie in the list
     for movie_id in movie_list:
         # Reset member_scores for the next movie
         member_scores = []
+        movie_recommendations = []  # List to store recommendation lists for each member
         # Loop through each group member
         for member_id in member_ids:
             similar_users = all_similarities[member_id]
@@ -288,6 +367,7 @@ def recommend_movies(movie_list, member_ids, aggregation_method, coefficient=0.2
 
             # Add the score
             member_scores.append(user_ratings[movie_id])
+            movie_recommendations.extend(all_recommendation_lists[member_id])  # Extend the recommendation list
 
         # Calculate disagreement for each movie
         disagreement = np.std(member_scores)
@@ -306,12 +386,18 @@ def recommend_movies(movie_list, member_ids, aggregation_method, coefficient=0.2
             # Add the aggregated score to the dictionary
             aggregated_scores[movie_id] = aggregated_score
 
+        # Append the recommendation list for the movie
+        member_recommendations.append(movie_recommendations)
+
     # Sort and display the top 10 movies
     top_movies = sorted(aggregated_scores.items(), key=lambda x: x[1], reverse=True)[:10]
     print(f'{aggregation_method} Aggregation: {top_movies}')
 
+    # Return the top movies and extended recommendation lists
+    return top_movies, member_recommendations
 
 # PRINTS AND FUNCTION CALLS ###
+
 
 # F.7 Generate group of 3 users
 group_members = generate_group_of_users()
@@ -319,3 +405,32 @@ group_members = generate_group_of_users()
 # F.12 Show top 10 movie recommendations for the group using three methods
 print('\nTop 10 Movie Recommendations:')
 recommend_movies(movie_list, group_members, 'Disagreement Aware')
+
+
+print('\n####  ATOMIC CASE ####')
+input_string = input(f"Why not ")  # movie name as input
+
+# Create an empty dictionary to store explanations for each user in the group
+explanations_dict = {}
+
+# Loop through each user in the group
+for user_id in group_members:
+    # Get the peers' rating scores and recommendation lists
+    peers_rating_scores = {movie_id: peers[peer][movie_id] for peer in peers[user_id] for movie_id in peers[user_id][peer]}
+
+    # Get the recommendation list for the current user
+    user_recommendations = get_top_recommended_movies(user_id, compute_user_similarity(user_id))
+
+    numPI = 5
+    numP = 3
+    # Call the explain_why_not function for the target movie ID
+    explanations = explain_why_not(input_string, f"Why not {input_string}", peers_rating_scores, user_recommendations, numPI, numP, peers)
+
+    # Store the explanations in the dictionary
+    explanations_dict[user_id] = explanations[user_id]
+
+# Print or use the explanations as needed
+for user_id, explanation in explanations_dict.items():
+    print(f"\nExplanations for User {user_id} and Movie Name {input_string}:")
+    for reason in explanation:
+        print(f"- {reason}")
