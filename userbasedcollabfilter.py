@@ -6,6 +6,12 @@ ratings = pd.read_csv('u.data', sep='\t', names=['user_id', 'movie_id', 'rating'
 num_ratings = len(ratings)
 movie_list = ratings['movie_id'].unique()
 
+# Declare peers dictionary globally
+peers = {user_id: {} for user_id in ratings['user_id'].unique()}
+
+# Set of all users
+U = set(ratings['user_id'].unique())
+
 
 # B) Implement user-based collaborative filtering with Pearson correlation
 def compute_user_similarity(user_id):
@@ -36,21 +42,66 @@ def compute_user_similarity(user_id):
     return similarity_scores
 
 
+def explain_why_not(i, user_id, why_not_question, rating_scores, recommendation_list, numPI, numP, peers,
+                    neighborhood_size=5):
+    explanation = set()
+    similarity_scores = {}
+
+    for user_id in U:
+        similarity_scores[user_id] = compute_user_similarity(user_id)
+
+    # Check if the specific item does not exist in the database.
+    if i not in rating_scores:
+        explanation.add('Item not in database')
+    else:
+        # Check if there is a tie with another item in the recommendation list.
+        tied_items = [i0 for i0 in rating_scores if
+                      i0 != i and rating_scores[user_id, i0] == rating_scores[user_id, i] and recommendation_list.index(
+                          i0) <= 2 * neighborhood_size]
+        if tied_items:
+            explanation.add('Tied relevance scores')
+        # Check if the item appears between the kth and 2kth entry in the recommendation list.
+        elif recommendation_list.index(i) <= 2 * neighborhood_size:
+            explanation.add('Position in list (neighborhood_size)')
+        # Check if none of the users in the system have rated the item.
+        elif i not in rating_scores:
+            explanation.add('No ratings for the item')
+        else:
+            # Check the peers of the user.
+            if any(peers[peer][i] for peer in peers):
+                for peer in peers:
+                    if peers[peer][i]:
+                        explanation.add(
+                            (f"Peer {peer}", f"Rating: {peers[peer][i]}", f"Similarity: {similarity_scores[peer]}"))
+                # Check if there are not enough most similar peers who have rated the item.
+                if len([1 for peer in peers if peers[peer][i]]) < numPI:
+                    explanation.add('Insufficient most similar peers')
+                # Check if there are not enough most similar peers who have rated the item among the top numP peers.
+                if len(peers) < numP:
+                    explanation.add('Insufficient overall similar peers')
+            else:
+                # Check if none of the peers has rated the item.
+                for u0 in U:
+                    if u0 != user_id and peers[u0][i]:
+                        explanation.add((f"User {u0}", f"Rating: {peers[u0][i]}", '-'))
+                explanation.add('No peer ratings for the item')
+
+    return explanation
+
+
 # C) Predict movie scores if rating doesn't exist
-def predict_movie_score(user_id, movie_id, similar_users, floor=0.5):   # Ratings can't be less than 0.5
+def predict_movie_score(user_id, movie_id, similar_users, floor=0.5):  # Ratings can't be less than 0.5
     user_ratings = ratings[ratings['user_id'] == user_id].set_index('movie_id')['rating']
     total_similarity = 0
     weighted_sum = 0
     predicted_score = 0
-    
+
     if movie_id not in user_ratings.index:
-        # Filter ratings for similar users who have rated the specified movie
         other_user_ratings = \
             ratings[(ratings['user_id'].isin(similar_users.keys())) & (ratings['movie_id'] == movie_id)].set_index(
                 'user_id')[
                 'rating']
 
-        # Loop through common users and calculate weighted sum and total similarity
         for user in user_ratings.index.intersection(other_user_ratings.index):
             similarity = similar_users[user]
             user_rating = user_ratings[user]
@@ -59,14 +110,10 @@ def predict_movie_score(user_id, movie_id, similar_users, floor=0.5):   # Rating
             weighted_sum += similarity * other_user_rating
             total_similarity += abs(similarity)
 
-        # If total similarity is zero (to avoid division by zero)
         if total_similarity == 0:
             return None
 
-        # Calculate the predicted movie score
         predicted_score = weighted_sum / total_similarity
-
-        # Negative movie scores aren't allowed, instead apply the floor value
         predicted_score = max(predicted_score, floor)
 
     if movie_id in user_ratings.index:
@@ -165,7 +212,8 @@ def group_recommendation_disagreements(individual_ratings, coefficient=0.2):
 
 
 # F.4 Function to generate group of 3 users
-def generate_group_of_users(num_members=3): # number of members can be specified
+def generate_group_of_users(num_members=3):  # number of members can be specified
+
     group_members = []
 
     for i in range(num_members):
@@ -183,10 +231,11 @@ def generate_group_of_users(num_members=3): # number of members can be specified
     return group_members
 
 
-# F.5 Calculate or fetch rating for given movie for each member of the group
+# F.5 Calculate or fetch rating for a given movie for each member of the group
 def calculate_user_ratings(user_ids, movie_id):
-    # Calculate predictions for each user in the group
+    # Initialize the dictionary to store ratings for each user in the group
     individual_ratings = {}
+
     for user_id in user_ids:
         similar_users = compute_user_similarity(user_id)
         prediction = predict_movie_score(user_id, movie_id, similar_users)
@@ -198,6 +247,11 @@ def calculate_user_ratings(user_ids, movie_id):
     # If no predictions are available, return None
     if not individual_ratings:
         return None
+
+    # Update the peers dictionary with user ratings for the given movie
+    for user_id, rating in individual_ratings.items():
+        peers[user_id][movie_id] = rating
+
     return individual_ratings
 
 
@@ -222,18 +276,19 @@ def recommend_movies(movie_list, member_ids, aggregation_method, coefficient=0.2
         for member_id in member_ids:
             similar_users = all_similarities[member_id]
             user_ratings = all_user_ratings[member_id]
-            
+
             # Check if the user has a rating for the movie
             if movie_id not in user_ratings.index:
                 # If not, predict the rating using the predict_movie_score function
                 prediction = predict_movie_score(member_id, movie_id, similar_users)
-                
+
                 # Add the movie_id to user_ratings with the predicted score
-                user_ratings.at[movie_id] = prediction if prediction is not None else 0  # Use 0 as a default if prediction is None
+                user_ratings.at[
+                    movie_id] = prediction if prediction is not None else 0  # Use 0 as a default if prediction is None
 
             # Add the score
             member_scores.append(user_ratings[movie_id])
-        
+
         # Calculate disagreement for each movie
         disagreement = np.std(member_scores)
 
@@ -245,9 +300,9 @@ def recommend_movies(movie_list, member_ids, aggregation_method, coefficient=0.2
             elif aggregation_method == 'Least Misery':
                 aggregated_score = round(np.min(member_scores), 3)
             # Apply the disagreement-aware aggregation
-            elif aggregation_method == 'Disagreement Aware': 
+            elif aggregation_method == 'Disagreement Aware':
                 aggregated_score = round(np.mean(member_scores) + coefficient * disagreement, 3)
-                
+
             # Add the aggregated score to the dictionary
             aggregated_scores[movie_id] = aggregated_score
 
@@ -255,42 +310,12 @@ def recommend_movies(movie_list, member_ids, aggregation_method, coefficient=0.2
     top_movies = sorted(aggregated_scores.items(), key=lambda x: x[1], reverse=True)[:10]
     print(f'{aggregation_method} Aggregation: {top_movies}')
 
-### PRINTS AND FUNCTION CALLS ###
+
+# PRINTS AND FUNCTION CALLS ###
 
 # F.7 Generate group of 3 users
 group_members = generate_group_of_users()
 
-
-# F.8 Prompt user for movie ID for group recommendation
-while True:
-    try:
-        group_movie_id = int(input("Enter movie ID for group recommendation: "))
-        if group_movie_id not in ratings['movie_id'].unique():
-            print("Invalid movie ID. Please enter a valid movie ID.")
-        else:
-            break
-    except ValueError:
-        print("Invalid input. Please enter a valid movie ID.")
-
-
-# F.9 Calculate individual ratings for group members for group_movie_id
-member_ratings = calculate_user_ratings(group_members, group_movie_id)
-
-
-# F.10 Generate group recommendations for given movie using three aggregation methods
-group_recommendation_avg = group_recommendation_average(member_ratings)
-group_recommendation_lm = group_recommendation_least_misery(member_ratings)
-group_recommendation_disagreements_result = group_recommendation_disagreements(member_ratings)
-
-
-# F.11 Display group recommendations
-print(f'\nGroup Recommendation for Movie {group_movie_id} Using Average Aggregation: {group_recommendation_avg}')
-print(f'Group Recommendation for Movie {group_movie_id} Using Least Misery Aggregation: {group_recommendation_lm}')
-print(f'Group Recommendation for Movie {group_movie_id} Using Disagreements-Aware Aggregation: {group_recommendation_disagreements_result}')
-
-
 # F.12 Show top 10 movie recommendations for the group using three methods
 print('\nTop 10 Movie Recommendations:')
-recommend_movies(movie_list, group_members, 'Average')
-recommend_movies(movie_list, group_members, 'Least Misery')
 recommend_movies(movie_list, group_members, 'Disagreement Aware')
