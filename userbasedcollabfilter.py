@@ -66,11 +66,6 @@ for line in movies_content:
         if value == 1:
             genre_dict[genre].append(movie_title)  # Add movie to the genre_dict as well
 
-    # Add movie to category dictionary based on genre
-    for genre, value in zip(genre_dict.keys(), map(int, parts[5:])):
-        if value == 1:
-            genre_dict[genre].append(movie_title)  # Add movie to the genre_dict as well
-
 # Print or use the resulting dictionaries as needed
 print(movies_dict)
 print(genre_dict)
@@ -111,32 +106,41 @@ def compute_user_similarity(user_id):
     return similarity_scores
 
 
+def get_movie_name_by_id(movie_id):
+    for name, _id in movies_dict.items():
+        if _id == movie_id:
+            return name
+    return None  # Return None if the movie ID is not found in the dictionary
+
+
 # Function to provide explanations for why a certain recommendation may not be suitable for group members
 def explain_why_not(input_string, why_not_question, rating_scores, recommendation_list, numPI, numP, peers,
                     neighborhood_size=5):
     explanations = {}  # Dictionary to store explanations for each group member
 
     for target_user_id in group_members:
+        user_rated_movies = {} # Dictionary to store ratings for each group member
         explanation = set()  # Set to store unique explanations for each user
+
         similarity_scores = compute_user_similarity(target_user_id)
+        user_rated_movies = ratings[ratings['user_id'] == user_id]['movie_id']
         id = movies_dict.get(input_string)
 
-        # Check if the specific item does not exist in the database.
-        if input_string not in movies_dict:
-            explanation.add('Item not in database')
+        if id is not None and id in user_rated_movies.values:
+            explanation.add(f'User has already rated {input_string}')
         else:
             # Check if there is a tie with another item in the recommendation list.
-            tied_items = [i0 for i0 in rating_scores if
-                          i0 != id and rating_scores[target_user_id, i0] == rating_scores[
-                              target_user_id, id] and recommendation_list.count(i0) <= 2 * neighborhood_size]
+            tied_items = [i0 for i0 in rating_scores.get(target_user_id, {}) if i0 != id and (rating_scores.get(target_user_id, {}).get(i0) == rating_scores.get(target_user_id, {}).get(id)).any() and recommendation_list.count(i0) <= 2 * neighborhood_size]
             if tied_items:
                 explanation.add('Tied relevance scores')
+            elif id not in user_rated_movies:
+                explanation.add('User has not rated the item')
             # Check if the item appears between the kth and 2kth entry in the recommendation list.
             elif id in recommendation_list and recommendation_list.index(id) <= 2 * neighborhood_size:
                 explanation.add('Position in list (neighborhood_size)')
             # Check if none of the users in the system have rated the item.
             elif id not in rating_scores:
-                explanation.add('No ratings for the item')
+                explanation.add('No peer ratings for the item')
             else:
                 # Check the peers of the target user.
                 if any(peers[target_user_id][peer][id] for peer in peers[target_user_id]):
@@ -162,6 +166,77 @@ def explain_why_not(input_string, why_not_question, rating_scores, recommendatio
 
     return explanations
 
+def explain_group_why_not(input_string, why_not_question, peers_rating_scores, user_recommendations, numPI, numP, peers):
+    collective_explanation = set()  # Set to store unique collective explanations for the group
+
+    # Loop through each user in the group
+    for target_user_id in group_members:
+        user_rated_movies = ratings[ratings['user_id'] == target_user_id]['movie_id']
+
+        # Get the top similar users and their similarity scores
+        top_similar_users = get_top_similar_users(target_user_id)
+
+        # Initialize a dictionary to store ratings for the current user
+        user_ratings = {}
+
+         # Loop through each similar user and their similarity score
+        for similar_user_id, similarity_score in top_similar_users:
+            # Add the similar user and their rating to the dictionary
+            user_ratings[similar_user_id] = ratings[ratings['user_id'] == similar_user_id].set_index('movie_id')['rating']
+
+        # Check if the category is already recommended to the user
+        for movie, rating in user_recommendations[target_user_id]:
+            movie_name = get_movie_name_by_id(movie)
+            if movie_name in genre_dict[input_string]:
+                collective_explanation.add(f"Category {input_string} is recommended to User {target_user_id}")
+                continue  # Skip further checks for this user
+
+        # Check if the category is already recommended to the user
+        for movie in user_rated_movies:
+            movie_name = get_movie_name_by_id(movie)
+            if movie_name in genre_dict[input_string]:
+                collective_explanation.add(f"User {target_user_id} has rated movie(s) from genre: {input_string}")
+                continue  # Skip further checks for this user
+
+        # Fetch movie names from genre_dict using movie iterator (which is an id number)
+        movie_ids = [movies_dict.get(movie) for movie in genre_dict[input_string]]
+
+        # Check if none of the users in the system have rated the items in the category.
+        if not any(movie_id in movie_ids for movie_id in user_rated_movies):
+            collective_explanation.add(f"No ratings for the items in Category {input_string} by User {target_user_id}")
+
+        # Check the peers of the target user.
+        if target_user_id in peers and any(peer in peers[target_user_id] for peer in peers[target_user_id]):
+            for peer in peers[target_user_id]:
+                if peer in peers[target_user_id] and peers[target_user_id][peer]:
+                    for category in genre_dict[input_string]:
+                        if category in peers[target_user_id][peer]:
+                            explanation = (f"Peer {peer}: Rating: {peers[target_user_id][peer][category]}, "
+                                           f"Similarity: {similarity_scores.get(peer, 'N/A')}")
+                            collective_explanation.add(explanation)
+
+        # Check if there are not enough most similar peers who have rated the items in the category.
+        if len([1 for peer in peers[target_user_id] if any(
+                category in peers[target_user_id][peer] for category in genre_dict[input_string])]) < numPI:
+            collective_explanation.add(f"Insufficient most similar peers for Category {input_string} for User {target_user_id}")
+
+        # Check if there are not enough most similar peers who have rated the items in the category among the top numP peers.
+        if len(peers[target_user_id]) < numP:
+            collective_explanation.add(f"Insufficient overall similar peers for Category {input_string} for User {target_user_id}")
+            # Check if none of the peers has rated the items in the category.
+            for u0 in U:
+                if u0 != target_user_id and target_user_id in peers and u0 in peers[target_user_id] and any(
+                        peers[target_user_id][u0].get(category) for category in genre_dict[input_string]):
+                    explanation = f"User {u0}: Rating: {peers[target_user_id][u0][category]}"
+                    collective_explanation.add(explanation)
+
+        else:
+            collective_explanation.add(f"No peer ratings for the items in Category {input_string} by User {target_user_id}")
+
+    # Print explanations for the entire group
+    print(f"\nWhy not {input_string}:")
+    for reason in collective_explanation:
+        print(f"- {reason}")
 
 # C) Predict movie scores if rating doesn't exist
 def predict_movie_score(user_id, movie_id, similar_users, floor=0.5):  # Ratings can't be less than 0.5
@@ -405,19 +480,40 @@ group_members = generate_group_of_users()
 
 # F.12 Show top 10 movie recommendations for the group using three methods
 print('\nTop 10 Movie Recommendations:')
-recommend_movies(movie_list, group_members, 'Disagreement Aware')
+top_movies, _ = recommend_movies(movie_list, group_members, 'Disagreement Aware')
 
 
 print('\n####  ATOMIC CASE ####')
-input_string = input(f"Why not ")  # movie name as input
+# Handle invalid movie input in the atomic case
+while True:
+    input_string = input("Why not ")  # movie name as input
+    if input_string not in movies_dict:
+        print("Invalid movie name. Please enter a valid movie.")
+    else:
+        break
 
 # Create an empty dictionary to store explanations for each user in the group
 explanations_dict = {}
+peers_rating_scores = {}
+
 
 # Loop through each user in the group
 for user_id in group_members:
-    # Get the peers' rating scores and recommendation lists
-    peers_rating_scores = {movie_id: peers[peer][movie_id] for peer in peers[user_id] for movie_id in peers[user_id][peer]}
+    # Get the top similar users and their similarity scores
+    top_similar_users = get_top_similar_users(user_id)
+
+    # Initialize a dictionary to store ratings for the current user
+    user_ratings = {}
+
+    # Loop through each similar user and their similarity score
+    for similar_user_id, similarity_score in top_similar_users:
+
+        # Add the similar user and their rating to the dictionary
+        user_ratings[similar_user_id] = ratings[ratings['user_id'] == similar_user_id].set_index('movie_id')['rating']
+
+    # Add the user's ratings to the overall dictionary
+    peers_rating_scores[user_id] = user_ratings
+    
 
     # Get the recommendation list for the current user
     user_recommendations = get_top_recommended_movies(user_id, compute_user_similarity(user_id))
@@ -435,3 +531,69 @@ for user_id, explanation in explanations_dict.items():
     print(f"\nExplanations for User {user_id} and Movie Name {input_string}:")
     for reason in explanation:
         print(f"- {reason}")
+
+print('\n####  GROUP CASE  ####')
+# Handle invalid category input in the group case
+while True:
+    input_string = input("Why not ") # movie category as input
+    if input_string not in genre_dict:
+        print("Invalid category. Please enter a valid category.")
+    else:
+        break
+
+# Create an empty dictionary to store explanations for each user in the group
+cat_explanations_dict = {}
+peers_rating_scores = {}
+
+
+# Loop through each user in the group
+for user_id in group_members:
+    # Get the top similar users and their similarity scores
+    top_similar_users = get_top_similar_users(user_id)
+
+    # Initialize a dictionary to store ratings for the current user
+    user_ratings = {}
+
+    # Loop through each similar user and their similarity score
+    for similar_user_id, similarity_score in top_similar_users:
+
+        # Add the similar user and their rating to the dictionary
+        user_ratings[similar_user_id] = ratings[ratings['user_id'] == similar_user_id].set_index('movie_id')['rating']
+
+    # Add the user's ratings to the overall dictionary
+    peers_rating_scores[user_id] = user_ratings
+    
+    # Get the recommendation list for the current user
+    user_recommendations[user_id] = get_top_recommended_movies(user_id, compute_user_similarity(user_id))
+
+numPI = 2
+numP = 1
+# Call the explain_group_why_not function for the target movie category
+explain_group_why_not(input_string, f"Why not {input_string}", peers_rating_scores, user_recommendations, numPI, numP, peers)
+
+print('\n####  POSITION ABSENTEEISM ####')
+print('\nWhy not rank _ as first?')
+# Handle invalid movie input in the atomic case
+while True:
+    input_string = input("Input movie: ")  # movie name as input
+    if input_string not in movies_dict:
+        print("Invalid movie name. Please enter a valid movie.")
+    else:
+        break
+
+movie_id = movies_dict.get(input_string)
+score_avg = {}
+
+top_movie_ids = [t[0] for t in top_movies]
+
+# Find if movie is already in top 10
+if movie_id not in top_movie_ids:
+    print(f"{input_string} doesn't have a high enough predicted group score to make the top 10")
+# Explain why it isn't number 1
+else:
+    first_rank = max(top_movies, key=lambda k: k[1])
+    key = first_rank[0]
+    if movie_id != key:
+        print(f"{input_string} is in the top 10 but it doesn't have a high enough predicted score to be ranked #1")
+    else:
+        print(f"{input_string} is already ranked number one")
